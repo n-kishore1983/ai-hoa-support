@@ -1,0 +1,32 @@
+spring:
+  application:
+    name: ai-hoa-support
+  ai:
+    vectorstore:
+      chroma:
+        client:
+          host: http://localhost
+          port: 8000
+        initialize-schema: true
+        collection-name: hoa-documents
+    ollama:
+      embedding:
+        model: mxbai-embed-large
+      init:
+        pull-model-strategy: when_missing
+      base-url: http://localhost:11434
+    mcp:
+      server:
+        protocol: sse
+        name: ai-hoa-support
+        version: 0.0.1
+        enabled: true
+        type: sync
+        streamable-http:
+          mcp-endpoint: /mcp
+
+hoa:
+  document-folder-path: ${HOA_DOCUMENT_FOLDER_PATH:}
+  document-loading-enabled: ${HOA_DOCUMENT_LOADING_ENABLED:false}
+server:
+  port: 8083
