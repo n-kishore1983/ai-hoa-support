@@ -9,12 +9,14 @@ spring:
           port: 8000
         initialize-schema: true
         collection-name: hoa-documents
-    ollama:
-      embedding:
-        model: mxbai-embed-large
-      init:
-        pull-model-strategy: when_missing
-      base-url: http://localhost:11434
+    openai:
+      api-key: ${OPENAI_API_KEY}
+#    ollama:
+#      embedding:
+#        model: mxbai-embed-large
+#      init:
+#        pull-model-strategy: always
+#      base-url: http://localhost:11434
     mcp:
       server:
         protocol: sse

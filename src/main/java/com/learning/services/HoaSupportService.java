@@ -1,11 +1,13 @@
 package com.learning.services;
 
 import com.learning.domain.HoaDocumentPayload;
+import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.client.advisor.vectorstore.QuestionAnswerAdvisor;
+import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.transformer.splitter.TokenTextSplitter;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.ai.mcp.annotation.McpTool;
 
@@ -14,33 +16,28 @@ import java.util.List;
 @Service
 public class HoaSupportService {
 
-    private VectorStore vectorStore;
 
-    @Autowired
-    public HoaSupportService(VectorStore vectorStore) {
+    private final VectorStore vectorStore;
+    private final ChatModel chatModel;
+
+    public HoaSupportService(VectorStore vectorStore, ChatModel chatModel) {
         this.vectorStore = vectorStore;
+        this.chatModel = chatModel;
     }
 
     @McpTool(name = "hoa-document-search", description = "Provides support information for HOA-related queries")
     public String getHoaSupportInfo(String query) {
-        List<Document> results = this.vectorStore.similaritySearch(
-                SearchRequest.builder()
-                        .query(query)
-                        .topK(10)                        // Limit to top 10 matches
-                        .similarityThreshold(0.0)       // Minimum similarity score
+        SearchRequest searchRequest = SearchRequest.builder()
+                .topK(10)                        // Limit to top 10 matches
+                .similarityThreshold(0.0)       // Minimum similarity score
+                .build();
+        ChatClient chatClient = ChatClient.builder(chatModel)
+                .build();
+        return chatClient.prompt().advisors(
+                QuestionAnswerAdvisor.builder(vectorStore)
+                        .searchRequest(searchRequest)
                         .build()
-        );
-        // Process the results and return the relevant information
-        StringBuilder sb = new StringBuilder();
-        for (Document doc : results) {
-            sb.append(doc.getFormattedContent()).append("\n");
-
-            System.out.println("score=" + doc.getScore());
-            assert doc.getText() != null;
-            System.out.println(doc.getText().substring(0, Math.min(200, doc.getText().length())));
-            System.out.println("---");
-        }
-        return sb.toString();
+        ).user(query).call().content();
     }
 
     @McpTool(name = "hoa-document-add", description = "Adds a new document to the HOA store")
