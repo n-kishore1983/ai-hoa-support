@@ -1,15 +1,11 @@
 package com.learning.init;
 
-import io.jchunk.semantic.Config;
-import io.jchunk.semantic.SemanticChunker;
-import io.jchunk.semantic.embedder.JChunkEmbedder;
+import com.learning.services.SemanticDocumentSplitter;
 import jakarta.annotation.PostConstruct;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.reader.ExtractedTextFormatter;
 import org.springframework.ai.reader.pdf.PagePdfDocumentReader;
 import org.springframework.ai.reader.pdf.config.PdfDocumentReaderConfig;
-import org.springframework.ai.transformer.splitter.TokenTextSplitter;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.FileSystemResource;
@@ -19,6 +15,7 @@ import org.springframework.util.StringUtils;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import java.util.logging.Logger;
 import java.util.stream.Stream;
 
@@ -27,13 +24,15 @@ public class HoaDocumentLoader {
 
     private static final Logger LOGGER = Logger.getLogger(HoaDocumentLoader.class.getName());
 
+    private final SemanticDocumentSplitter semanticDocumentSplitter;
     private final VectorStore vectorStore;
     private final String documentFolderPath;
     private final boolean documentLoadingEnabled;
 
-    public HoaDocumentLoader(VectorStore vectorStore,
+    public HoaDocumentLoader(SemanticDocumentSplitter semanticDocumentSplitter, VectorStore vectorStore,
                              @Value("${hoa.document-folder-path:}") String documentFolderPath,
                              @Value("${hoa.document-loading-enabled:false}") boolean documentLoadingEnabled) {
+        this.semanticDocumentSplitter = semanticDocumentSplitter;
         this.vectorStore = vectorStore;
         this.documentFolderPath = documentFolderPath;
         this.documentLoadingEnabled = documentLoadingEnabled;
@@ -56,47 +55,51 @@ public class HoaDocumentLoader {
             throw new IllegalStateException("HOA document folder path is invalid: " + documentFolderPath);
         }
 
-        try (JChunkEmbedder embedder = new JChunkEmbedder()) {
-            SemanticChunker semanticChunker = new SemanticChunker(embedder, Config.defaultConfig());
+        try (Stream<Path> pathStream = Files.list(folderPath)) {
+            List<Path> pdfFiles = pathStream
+                .filter(Files::isRegularFile)
+                .filter(path -> path.getFileName().toString().toLowerCase().endsWith(".pdf"))
+                .toList();
 
-            try (Stream<Path> pathStream = Files.list(folderPath)) {
-                List<Path> pdfFiles = pathStream
-                    .filter(Files::isRegularFile)
-                    .filter(path -> path.getFileName().toString().toLowerCase().endsWith(".pdf"))
-                    .toList();
+            for (Path path : pdfFiles) {
+                FileSystemResource pdfResource = new FileSystemResource(path);
+                PagePdfDocumentReader documentReader = new PagePdfDocumentReader(pdfResource, PdfDocumentReaderConfig.builder()
+                        .withPagesPerDocument(1)
+                        .withPageExtractedTextFormatter(
+                                ExtractedTextFormatter.builder()
+                                        .withNumberOfTopTextLinesToDelete(1)
+                                        .withNumberOfBottomTextLinesToDelete(1)
+                                        .build())
+                        .build());
 
-                for (Path path : pdfFiles) {
-                    FileSystemResource pdfResource = new FileSystemResource(path);
-                    // 1. Read PDF (one Document per page by default)
-                    PagePdfDocumentReader documentReader = new PagePdfDocumentReader(pdfResource, PdfDocumentReaderConfig.builder()
-                            .withPagesPerDocument(1) // 1 page = 1 Document
-                            .withPageExtractedTextFormatter(
-                                    ExtractedTextFormatter.builder()
-                                            .withNumberOfTopTextLinesToDelete(1)    // remove headers
-                                            .withNumberOfBottomTextLinesToDelete(1) // remove footers
-                                            .build())
-                            .build());
-                    List<Document> pages = documentReader.get();
-                //  2. Add useful metadata
-                    pages.forEach(doc -> {
-                        doc.getMetadata().put("source", pdfResource.getFilename());
-                        doc.getMetadata().put("type", "pdf");
-                    });
-                    // 3. Chunk each page text into safe segments and add to the vector store immediately
-                    TokenTextSplitter tokenTextSplitter = TokenTextSplitter.builder()
-                            .withChunkSize(500)
-                            .withMinChunkSizeChars(100)
-                            .withMinChunkLengthToEmbed(5)
-                            .withMaxNumChunks(10000)
-                            .withKeepSeparator(true)
-                            .build();
-                    List<Document> chunks = tokenTextSplitter.apply(pages);
-                    vectorStore.add(chunks);
-                    LOGGER.info(String.format("Ingested %d chunks from %s", chunks.size(), pdfResource.getFilename()));
+                List<Document> pages = documentReader.get();
+
+                for (Document page : pages) {
+                    page.getMetadata().put("source", pdfResource.getFilename());
+                    page.getMetadata().put("type", "pdf");
+                    String text = page.getText();
+                    if (!StringUtils.hasText(text)) {
+                        continue;
+                    }
+
+                    Map<String, Object> cleanMetadata = new java.util.HashMap<>(page.getMetadata());
+                    List<String> chunks = semanticDocumentSplitter.split(
+                        new Document(text, cleanMetadata));
+
+                    List<Document> splitDocuments = new java.util.ArrayList<>();
+                    for (String chunk : chunks) {
+                        if (StringUtils.hasText(chunk)) {
+                            splitDocuments.add(new Document(chunk, cleanMetadata));
+                        }
+                    }
+
+                    if (!splitDocuments.isEmpty()) {
+                        vectorStore.add(splitDocuments);
+                        LOGGER.info(String.format("Ingested %d chunks from %s", splitDocuments.size(), pdfResource.getFilename()));
+                    }
                 }
             }
-        }
-        catch (Exception exception) {
+        } catch (Exception exception) {
             throw new IllegalStateException("Failed to read HOA PDF files from: " + documentFolderPath, exception);
         }
     }

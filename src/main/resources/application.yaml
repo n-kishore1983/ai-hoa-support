@@ -2,6 +2,9 @@ spring:
   application:
     name: ai-hoa-support
   ai:
+    model:
+      chat: ${app.embedding.llm}
+      embedding: ${app.embedding.llm}
     vectorstore:
       chroma:
         client:
@@ -9,14 +12,16 @@ spring:
           port: 8000
         initialize-schema: true
         collection-name: hoa-documents
-#    openai:
-#      api-key: ${OPENAI_API_KEY}
-    ollama:
+    openai:
+      api-key: ${OPENAI_API_KEY:}
       embedding:
-        model: nomic-embed-text
+        model: ${app.embedding.openai.model-name:text-embedding-3-small}
+    ollama:
+      base-url: ${app.embedding.ollama.base-url:http://localhost:11434}
+      embedding:
+        model: ${app.embedding.ollama.model-name:mxbai-embed-large}
       init:
         pull-model-strategy: always
-      base-url: http://localhost:11434
     mcp:
       server:
         protocol: sse
@@ -26,6 +31,18 @@ spring:
         type: sync
         streamable-http:
           mcp-endpoint: /mcp
+
+app:
+  chat:
+    model: ${app.chat.model-name:}
+  embedding:
+    llm: openai
+    ollama:
+      base-url: http://localhost:11434
+      model-name: mxbai-embed-large
+    openai:
+      api-key: ${OPENAI_API_KEY:}
+      model-name: text-embedding-3-large
 
 hoa:
   document-folder-path: ${HOA_DOCUMENT_FOLDER_PATH:}
