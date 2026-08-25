@@ -1,5 +1,7 @@
 package com.learning.init;
 
+import com.learning.services.HoaSupportService;
+import com.learning.services.PdfOcrDetector;
 import com.learning.services.SemanticDocumentSplitter;
 import jakarta.annotation.PostConstruct;
 import org.springframework.ai.document.Document;
@@ -14,6 +16,7 @@ import org.springframework.util.StringUtils;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.logging.Logger;
@@ -24,18 +27,23 @@ public class HoaDocumentLoader {
 
     private static final Logger LOGGER = Logger.getLogger(HoaDocumentLoader.class.getName());
 
-    private final SemanticDocumentSplitter semanticDocumentSplitter;
-    private final VectorStore vectorStore;
+    private final HoaSupportService hoaSupportService;
+    private final PdfOcrDetector pdfOcrDetector;
     private final String documentFolderPath;
     private final boolean documentLoadingEnabled;
+    private final boolean ocrEnabled;
 
-    public HoaDocumentLoader(SemanticDocumentSplitter semanticDocumentSplitter, VectorStore vectorStore,
+
+    public HoaDocumentLoader(SemanticDocumentSplitter semanticDocumentSplitter, VectorStore vectorStore, HoaSupportService hoaSupportService,
+                             PdfOcrDetector pdfOcrDetector,
                              @Value("${hoa.document-folder-path:}") String documentFolderPath,
-                             @Value("${hoa.document-loading-enabled:false}") boolean documentLoadingEnabled) {
-        this.semanticDocumentSplitter = semanticDocumentSplitter;
-        this.vectorStore = vectorStore;
+                             @Value("${hoa.document-loading-enabled:false}") boolean documentLoadingEnabled,
+                             @Value("${hoa.ocr-enabled:true}") boolean ocrEnabled) {
+        this.hoaSupportService = hoaSupportService;
+        this.pdfOcrDetector = pdfOcrDetector;
         this.documentFolderPath = documentFolderPath;
         this.documentLoadingEnabled = documentLoadingEnabled;
+        this.ocrEnabled = ocrEnabled;
     }
 
     @PostConstruct
@@ -57,11 +65,12 @@ public class HoaDocumentLoader {
 
         try (Stream<Path> pathStream = Files.list(folderPath)) {
             List<Path> pdfFiles = pathStream
-                .filter(Files::isRegularFile)
-                .filter(path -> path.getFileName().toString().toLowerCase().endsWith(".pdf"))
-                .toList();
+                    .filter(Files::isRegularFile)
+                    .filter(path -> path.getFileName().toString().toLowerCase().endsWith(".pdf"))
+                    .toList();
 
             for (Path path : pdfFiles) {
+                LOGGER.info("Processing HOA PDF file: " + path.getFileName());
                 FileSystemResource pdfResource = new FileSystemResource(path);
                 PagePdfDocumentReader documentReader = new PagePdfDocumentReader(pdfResource, PdfDocumentReaderConfig.builder()
                         .withPagesPerDocument(1)
@@ -73,31 +82,35 @@ public class HoaDocumentLoader {
                         .build());
 
                 List<Document> pages = documentReader.get();
-
+                int totalChunksForFile = 0;
                 for (Document page : pages) {
                     page.getMetadata().put("source", pdfResource.getFilename());
                     page.getMetadata().put("type", "pdf");
                     String text = page.getText();
-                    if (!StringUtils.hasText(text)) {
-                        continue;
-                    }
 
-                    Map<String, Object> cleanMetadata = new java.util.HashMap<>(page.getMetadata());
-                    List<String> chunks = semanticDocumentSplitter.split(
-                        new Document(text, cleanMetadata));
+                    Map<String, Object> cleanMetadata = new HashMap<>(page.getMetadata());
+                    totalChunksForFile += hoaSupportService.splitAndStore(text, cleanMetadata);
+                }
 
-                    List<Document> splitDocuments = new java.util.ArrayList<>();
-                    for (String chunk : chunks) {
-                        if (StringUtils.hasText(chunk)) {
-                            splitDocuments.add(new Document(chunk, cleanMetadata));
-                        }
-                    }
-
-                    if (!splitDocuments.isEmpty()) {
-                        vectorStore.add(splitDocuments);
-                        LOGGER.info(String.format("Ingested %d chunks from %s", splitDocuments.size(), pdfResource.getFilename()));
+                if (ocrEnabled && pdfOcrDetector.hasOcrContent(path)) {
+                    String ocrText = hoaSupportService.extractTextWithOcr(path);
+                    LOGGER.info("ocrText: " + ocrText);
+                    if (StringUtils.hasText(ocrText)) {
+                        Map<String, Object> ocrMetadata = new HashMap<>();
+                        ocrMetadata.put("source", pdfResource.getFilename());
+                        ocrMetadata.put("type", "pdf-ocr");
+                        ocrMetadata.put("ocr", true);
+                        totalChunksForFile += hoaSupportService.splitAndStore(ocrText, ocrMetadata);
+                        LOGGER.info(String.format("OCR fallback used for %s", pdfResource.getFilename()));
+                    } else {
+                        LOGGER.warning(String.format("No text extracted for %s, even after OCR fallback.", pdfResource.getFilename()));
                     }
                 }
+
+                if (totalChunksForFile > 0) {
+                    LOGGER.info(String.format("Ingested %d chunks from %s", totalChunksForFile, pdfResource.getFilename()));
+                }
+                LOGGER.info(String.format("Finished processing HOA PDF file: %s", path.getFileName()));
             }
         } catch (Exception exception) {
             throw new IllegalStateException("Failed to read HOA PDF files from: " + documentFolderPath, exception);
@@ -105,3 +118,5 @@ public class HoaDocumentLoader {
     }
 
 }
+
+

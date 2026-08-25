@@ -47,5 +47,9 @@ app:
 hoa:
   document-folder-path: ${HOA_DOCUMENT_FOLDER_PATH:}
   document-loading-enabled: ${HOA_DOCUMENT_LOADING_ENABLED:false}
+  ocr-enabled: ${HOA_OCR_ENABLED:true}
+  ocr-language: ${HOA_OCR_LANGUAGE:eng}
+  ocr-tesseract-path: ${HOA_OCR_TESSERACT_PATH:}
+  ocr-tessdata-path: ${HOA_OCR_TESSDATA_PATH:}
 server:
   port: 8083
