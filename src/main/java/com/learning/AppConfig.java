@@ -1,6 +1,8 @@
 package com.learning;
 
 
+import com.learning.services.LucerneDocumentWriter;
+import com.learning.services.LucerneSearch;
 import io.micrometer.observation.ObservationRegistry;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.embedding.EmbeddingModel;
@@ -19,6 +21,9 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
+
+import java.io.IOException;
+import java.nio.file.Path;
 
 @Configuration
 public class AppConfig {
@@ -77,6 +82,18 @@ public class AppConfig {
                         .model(modelName)
                         .build())
                 .build();
+    }
+
+    @Bean
+    public LucerneDocumentWriter lucerneDocumentWriter(@Value("${lucene.index.path:target/lucene-index}") String indexPathValue) throws IOException {
+        Path indexPath = Path.of(indexPathValue == null || indexPathValue.isBlank() ? "target/lucene-index" : indexPathValue);
+        return new LucerneDocumentWriter(indexPath);
+    }
+
+    @Bean
+    public LucerneSearch lucerneSearch(@Value("${lucene.index.path:target/lucene-index}") String indexPathValue) throws IOException {
+        Path indexPath = Path.of(indexPathValue == null || indexPathValue.isBlank() ? "target/lucene-index" : indexPathValue);
+        return new LucerneSearch(indexPath);
     }
 
 }

@@ -13,6 +13,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.advisor.vectorstore.QuestionAnswerAdvisor;
 import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.chat.prompt.PromptTemplate;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.reader.ExtractedTextFormatter;
 import org.springframework.ai.reader.pdf.PagePdfDocumentReader;
@@ -26,21 +27,24 @@ import org.springframework.ai.mcp.annotation.McpTool;
 import org.springframework.util.StringUtils;
 import org.xml.sax.SAXException;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 @Service
 public class HoaSupportService {
 
-    private static final Logger log = LoggerFactory.getLogger(HoaSupportService.class);
 
     private final SemanticDocumentSplitter semanticDocumentSplitter;
     private final PdfOcrDetector pdfOcrDetector;
     private final VectorStore vectorStore;
+    private final LucerneSearch lucerneSearch;
+    private final LucerneDocumentWriter lucerneDocumentWriter;
     private final ChatModel chatModel;
     private final boolean ocrEnabled;
     private final String ocrLanguage;
@@ -49,14 +53,19 @@ public class HoaSupportService {
 
     private static final java.util.logging.Logger LOGGER = java.util.logging.Logger.getLogger(HoaSupportService.class.getName());
 
-    public HoaSupportService(SemanticDocumentSplitter semanticDocumentSplitter, PdfOcrDetector pdfOcrDetector, VectorStore vectorStore, ChatModel chatModel,
+    public HoaSupportService(SemanticDocumentSplitter semanticDocumentSplitter,
+                             PdfOcrDetector pdfOcrDetector,
+                             VectorStore vectorStore, LucerneSearch lucerneSearch, LucerneDocumentWriter lucerneDocumentWriter,
+                             ChatModel chatModel,
                              @Value("${hoa.ocr-enabled:true}") boolean ocrEnabled,
                              @Value("${hoa.ocr-language:eng}") String ocrLanguage,
                              @Value("${hoa.ocr-tesseract-path:}") String tesseractPath,
                              @Value("${hoa.ocr-tessdata-path:}") String tessdataPath) {
         this.semanticDocumentSplitter = semanticDocumentSplitter;
+        this.lucerneSearch = lucerneSearch;
         this.pdfOcrDetector = pdfOcrDetector;
         this.vectorStore = vectorStore;
+        this.lucerneDocumentWriter = lucerneDocumentWriter;
         this.chatModel = chatModel;
         this.ocrEnabled = ocrEnabled;
         this.ocrLanguage = ocrLanguage;
@@ -67,24 +76,37 @@ public class HoaSupportService {
     @McpTool(name = "hoa-document-search", description = "Provides support information for HOA-related queries")
     public String getHoaSupportInfo(String query) {
         try {
-            log.info("HOA search request: {}", query);
+            LOGGER.info("HOA search request: " + query);
 
             SearchRequest searchRequest = SearchRequest.builder()
                     .topK(10)                        // Limit to top 10 matches
                     .similarityThreshold(0.3)
                     .query(query)// Minimum similarity score
                     .build();
-            log.debug("HOA vector search request: {}", searchRequest);
-
+            LOGGER.fine("HOA vector search request: " + searchRequest);
+            var vectorSearchResults = vectorStore.similaritySearch(searchRequest);
+            LOGGER.fine("HOA vector search results: " + vectorSearchResults);
+            var luceneSearchResults = lucerneSearch.search(query, 10);
+            LOGGER.fine("HOA Lucene search results: " + luceneSearchResults);
+            var fusedResults = reciprocalRankFusion(vectorSearchResults, luceneSearchResults, 10);
+            LOGGER.fine("HOA fused search results: " + fusedResults);
+            String context = fusedResults.stream()
+                    .map(Document::getText)
+                    .collect(Collectors.joining("\n\n"));
+            String template = """
+            Use the following context to answer the question.
+            
+            Context:
+            {context}
+       
+            """;
+            PromptTemplate promptTemplate = new PromptTemplate(template);
+            Map<String, Object> modelMap = Map.of("context", context);
             ChatClient chatClient = ChatClient.builder(chatModel)
                     .build();
-            return chatClient.prompt().advisors(
-                    QuestionAnswerAdvisor.builder(vectorStore)
-                            .searchRequest(searchRequest)
-                            .build()
-            ).user(query).call().content();
+            return chatClient.prompt(promptTemplate.create(modelMap)).user(query).call().content();
         } catch (Exception e) {
-            log.error("Error processing HOA search request for query: {}", query, e);
+            LOGGER.severe("Error processing HOA search request for query: " + query + ". " + e.getMessage());
             return "I could not process that HOA question right now. Please try again later.";
         }
     }
@@ -115,28 +137,36 @@ public class HoaSupportService {
             String text = page.getText();
 
             Map<String, Object> cleanMetadata = new HashMap<>(page.getMetadata());
-            totalChunksForFile += splitAndStore(text, cleanMetadata);
-        }
-
-        if(ocrEnabled && pdfOcrDetector.hasOcrContent(path1)) {
-            String ocrText = extractTextWithOcr(path1);
-            if (StringUtils.hasText(ocrText)) {
-                Map<String, Object> ocrMetadata = new HashMap<>();
-                ocrMetadata.put("source", pdfResource.getFilename());
-                ocrMetadata.put("type", "pdf-ocr");
-                ocrMetadata.put("ocr", true);
-                totalChunksForFile += splitAndStore(ocrText, ocrMetadata);
+            try {
+                totalChunksForFile += splitAndStore(text, cleanMetadata);
+            } catch (IOException e) {
+                LOGGER.severe("Error splitting and storing document chunk for document " + path1.getFileName() + ": " + e.getMessage());
             }
         }
+
+        try {
+            if(ocrEnabled && pdfOcrDetector.hasOcrContent(path1)) {
+                String ocrText = extractTextWithOcr(path1);
+                if (StringUtils.hasText(ocrText)) {
+                    Map<String, Object> ocrMetadata = new HashMap<>();
+                    ocrMetadata.put("source", pdfResource.getFilename());
+                    ocrMetadata.put("type", "pdf-ocr");
+                    ocrMetadata.put("ocr", true);
+                    totalChunksForFile += splitAndStore(ocrText, ocrMetadata);
+                }
+            }
+        } catch (IOException e) {
+            LOGGER.severe("Error processing OCR content for document " + path1.getFileName() + ": " + e.getMessage());
+        }
         if (totalChunksForFile > 0) {
-            log.info("Ingested {} chunks for document {}", totalChunksForFile, path1.getFileName());
+            LOGGER.info("Ingested " + totalChunksForFile + " chunks for document " + path1.getFileName());
             return "Document added to vector store successfully.";
         }
 
         return "Document could not be added to vector store. No valid chunks were created.";
     }
 
-    public int splitAndStore(String text, Map<String, Object> metadata) {
+    public int splitAndStore(String text, Map<String, Object> metadata) throws IOException {
         List<String> chunks = semanticDocumentSplitter.split(new Document(text, metadata));
         List<Document> splitDocuments = new ArrayList<>();
         for (String chunk : chunks) {
@@ -150,6 +180,7 @@ public class HoaSupportService {
         }
 
         vectorStore.add(splitDocuments);
+        lucerneDocumentWriter.add(splitDocuments);
         return splitDocuments.size();
     }
 
@@ -187,8 +218,46 @@ public class HoaSupportService {
             new AutoDetectParser().parse(inputStream, handler, new Metadata(), parseContext);
             return handler.toString();
         } catch (TikaException | SAXException | java.io.IOException exception) {
-            log.info(String.format("OCR extraction failed for %s: %s", pdfPath.getFileName(), exception.getMessage()));
+            LOGGER.severe("OCR extraction failed for " + pdfPath.getFileName() + ": " + exception.getMessage());
             return "";
+        }
+    }
+
+    private List<Document> reciprocalRankFusion(
+            List<Document> vectorResults,
+            List<Document> bm25Results,
+            int limit) {
+
+        Map<String, Double> scores = new HashMap<>();
+        Map<String, Document> documents = new HashMap<>();
+
+        addRrfScores(vectorResults, scores, documents);
+        addRrfScores(bm25Results, scores, documents);
+
+        return scores.entrySet().stream()
+                .sorted(Map.Entry.<String, Double>comparingByValue().reversed())
+                .limit(limit)
+                .map(entry -> documents.get(entry.getKey()))
+                .toList();
+    }
+
+    private void addRrfScores(
+            List<Document> results,
+            Map<String, Double> scores,
+            Map<String, Document> documents) {
+
+        final int k = 60;
+
+        for (int i = 0; i < results.size(); i++) {
+            var document = results.get(i);
+            var rank = i + 1;
+
+            documents.putIfAbsent(document.getId(), document);
+
+            scores.merge(
+                    document.getId(),
+                    1.0 / (k + rank),
+                    Double::sum);
         }
     }
 

@@ -53,3 +53,6 @@ hoa:
   ocr-tessdata-path: ${HOA_OCR_TESSDATA_PATH:}
 server:
   port: 8083
+lucene:
+  index:
+    path: ${LUCENE_INDEX_PATH:target/lucene-index}
