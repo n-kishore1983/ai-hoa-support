@@ -119,6 +119,16 @@
             <artifactId>lucene-queryparser</artifactId>
             <version>10.5.1</version>
         </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.google.guava</groupId>
+            <artifactId>guava</artifactId>
+            <version>33.7.1-jre</version>
+            <scope>compile</scope>
+        </dependency>
     </dependencies>
     <dependencyManagement>
 <dependencies>

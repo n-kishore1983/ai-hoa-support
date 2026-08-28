@@ -22,6 +22,7 @@ import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.FileSystemResource;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.ai.mcp.annotation.McpTool;
 import org.springframework.util.StringUtils;
@@ -46,6 +47,7 @@ public class HoaSupportService {
     private final LucerneSearch lucerneSearch;
     private final LucerneDocumentWriter lucerneDocumentWriter;
     private final ChatModel chatModel;
+    private final RedisTemplate<String, String> redisTemplate;
     private final boolean ocrEnabled;
     private final String ocrLanguage;
     private final String tesseractPath;
@@ -56,7 +58,7 @@ public class HoaSupportService {
     public HoaSupportService(SemanticDocumentSplitter semanticDocumentSplitter,
                              PdfOcrDetector pdfOcrDetector,
                              VectorStore vectorStore, LucerneSearch lucerneSearch, LucerneDocumentWriter lucerneDocumentWriter,
-                             ChatModel chatModel,
+                             ChatModel chatModel, RedisTemplate<String, String> redisTemplate,
                              @Value("${hoa.ocr-enabled:true}") boolean ocrEnabled,
                              @Value("${hoa.ocr-language:eng}") String ocrLanguage,
                              @Value("${hoa.ocr-tesseract-path:}") String tesseractPath,
@@ -67,6 +69,7 @@ public class HoaSupportService {
         this.vectorStore = vectorStore;
         this.lucerneDocumentWriter = lucerneDocumentWriter;
         this.chatModel = chatModel;
+        this.redisTemplate = redisTemplate;
         this.ocrEnabled = ocrEnabled;
         this.ocrLanguage = ocrLanguage;
         this.tesseractPath = tesseractPath;
@@ -112,11 +115,18 @@ public class HoaSupportService {
     }
 
     @McpTool(name = "hoa-document-add", description = "Adds a new document to the HOA store")
-    public String addDocumentToVectorStore(String hoaDocumentPathStr) {
+    public String addDocumentToVectorStore(String hoaDocumentPathStr) throws IOException {
         Path path1 = Path.of(hoaDocumentPathStr);
         if (!Files.isRegularFile(path1)) {
             return "Document path is invalid or the file does not exist.";
         }
+        String checksum = com.google.common.io.Files.asByteSource(path1.toFile()).hash(com.google.common.hash.Hashing.sha256()).toString();
+        LOGGER.info("Checksum for file " + path1.getFileName() + ": " + checksum);
+        if(redisTemplate.hasKey(checksum)) {
+            LOGGER.info("Skipping HOA PDF file (already processed): " + path1.getFileName());
+            return "Document has already been processed.";
+        }
+        redisTemplate.opsForValue().set(checksum, path1.getFileName().toString());
         LOGGER.info("Processing HOA PDF file: " + path1.getFileName());
 
         FileSystemResource pdfResource = new FileSystemResource(path1);

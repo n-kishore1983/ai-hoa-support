@@ -21,6 +21,8 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
+import org.springframework.data.redis.connection.RedisConnectionFactory;
+import org.springframework.data.redis.core.RedisTemplate;
 
 import java.io.IOException;
 import java.nio.file.Path;
@@ -94,6 +96,13 @@ public class AppConfig {
     public LucerneSearch lucerneSearch(@Value("${lucene.index.path:target/lucene-index}") String indexPathValue) throws IOException {
         Path indexPath = Path.of(indexPathValue == null || indexPathValue.isBlank() ? "target/lucene-index" : indexPathValue);
         return new LucerneSearch(indexPath);
+    }
+
+    @Bean
+    public RedisTemplate<String, String> redisTemplate(RedisConnectionFactory connectionFactory) {
+        RedisTemplate<String, String> template = new RedisTemplate<>();
+        template.setConnectionFactory(connectionFactory);
+        return template;
     }
 
 }

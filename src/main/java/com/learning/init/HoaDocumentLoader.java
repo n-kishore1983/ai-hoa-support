@@ -2,15 +2,14 @@ package com.learning.init;
 
 import com.learning.services.HoaSupportService;
 import com.learning.services.PdfOcrDetector;
-import com.learning.services.SemanticDocumentSplitter;
 import jakarta.annotation.PostConstruct;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.reader.ExtractedTextFormatter;
 import org.springframework.ai.reader.pdf.PagePdfDocumentReader;
 import org.springframework.ai.reader.pdf.config.PdfDocumentReaderConfig;
-import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.FileSystemResource;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
@@ -29,18 +28,21 @@ public class HoaDocumentLoader {
 
     private final HoaSupportService hoaSupportService;
     private final PdfOcrDetector pdfOcrDetector;
+    private final RedisTemplate<String, String> redisTemplate;
     private final String documentFolderPath;
     private final boolean documentLoadingEnabled;
     private final boolean ocrEnabled;
 
 
-    public HoaDocumentLoader(SemanticDocumentSplitter semanticDocumentSplitter, VectorStore vectorStore, HoaSupportService hoaSupportService,
+    public HoaDocumentLoader(HoaSupportService hoaSupportService,
                              PdfOcrDetector pdfOcrDetector,
+                             RedisTemplate<String, String> redisTemplate,
                              @Value("${hoa.document-folder-path:}") String documentFolderPath,
                              @Value("${hoa.document-loading-enabled:false}") boolean documentLoadingEnabled,
                              @Value("${hoa.ocr-enabled:true}") boolean ocrEnabled) {
         this.hoaSupportService = hoaSupportService;
         this.pdfOcrDetector = pdfOcrDetector;
+        this.redisTemplate = redisTemplate;
         this.documentFolderPath = documentFolderPath;
         this.documentLoadingEnabled = documentLoadingEnabled;
         this.ocrEnabled = ocrEnabled;
@@ -70,6 +72,13 @@ public class HoaDocumentLoader {
                     .toList();
 
             for (Path path : pdfFiles) {
+                String checksum = com.google.common.io.Files.asByteSource(path.toFile()).hash(com.google.common.hash.Hashing.sha256()).toString();
+                LOGGER.info("Checksum for file " + path.getFileName() + ": " + checksum);
+                if(redisTemplate.hasKey(checksum)) {
+                    LOGGER.info("Skipping HOA PDF file (already processed): " + path.getFileName());
+                    continue;
+                }
+                redisTemplate.opsForValue().set(checksum, path.getFileName().toString());
                 LOGGER.info("Processing HOA PDF file: " + path.getFileName());
                 FileSystemResource pdfResource = new FileSystemResource(path);
                 PagePdfDocumentReader documentReader = new PagePdfDocumentReader(pdfResource, PdfDocumentReaderConfig.builder()
