@@ -11,6 +11,7 @@ import org.apache.tika.sax.BodyContentHandler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.client.advisor.api.CallAdvisor;
 import org.springframework.ai.chat.client.advisor.vectorstore.QuestionAnswerAdvisor;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
@@ -48,6 +49,7 @@ public class HoaSupportService {
     private final LucerneSearch lucerneSearch;
     private final LucerneDocumentWriter lucerneDocumentWriter;
     private final ChatModel chatModel;
+    private final CallAdvisor tokenUsageAdvisor;
     private final RedisTemplate<String, String> redisTemplate;
     private final boolean ocrEnabled;
     private final String ocrLanguage;
@@ -59,7 +61,8 @@ public class HoaSupportService {
     public HoaSupportService(SemanticDocumentSplitter semanticDocumentSplitter,
                              PdfOcrDetector pdfOcrDetector,
                              VectorStore vectorStore, LucerneSearch lucerneSearch, LucerneDocumentWriter lucerneDocumentWriter,
-                             ChatModel chatModel, RedisTemplate<String, String> redisTemplate,
+                             ChatModel chatModel, CallAdvisor tokenUsageAdvisor,
+                             RedisTemplate<String, String> redisTemplate,
                              @Value("${hoa.ocr-enabled:true}") boolean ocrEnabled,
                              @Value("${hoa.ocr-language:eng}") String ocrLanguage,
                              @Value("${hoa.ocr-tesseract-path:}") String tesseractPath,
@@ -70,6 +73,7 @@ public class HoaSupportService {
         this.vectorStore = vectorStore;
         this.lucerneDocumentWriter = lucerneDocumentWriter;
         this.chatModel = chatModel;
+        this.tokenUsageAdvisor = tokenUsageAdvisor;
         this.redisTemplate = redisTemplate;
         this.ocrEnabled = ocrEnabled;
         this.ocrLanguage = ocrLanguage;
@@ -107,6 +111,7 @@ public class HoaSupportService {
             PromptTemplate promptTemplate = new PromptTemplate(template);
             Map<String, Object> modelMap = Map.of("context", context);
             ChatClient chatClient = ChatClient.builder(chatModel)
+                    .defaultAdvisors(List.of(tokenUsageAdvisor))
                     .build();
             ChatResponse chatResponse = chatClient.prompt(promptTemplate.create(modelMap)).user(query).call().chatResponse();
 
