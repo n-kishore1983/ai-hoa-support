@@ -1,7 +1,21 @@
+management:
+  endpoints:
+    web:
+      exposure:
+        include: "metrics,prometheus,health"
+  endpoint:
+    health:
+      show-details: always
+
 spring:
   application:
     name: ai-hoa-support
   ai:
+    chat:
+      client:
+        observations:
+          log-prompt: true
+          log-completion: true
     model:
       chat: ${app.embedding.llm}
       embedding: ${app.embedding.llm}

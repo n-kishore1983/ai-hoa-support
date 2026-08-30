@@ -13,6 +13,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.advisor.vectorstore.QuestionAnswerAdvisor;
 import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.prompt.PromptTemplate;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.reader.ExtractedTextFormatter;
@@ -107,7 +108,9 @@ public class HoaSupportService {
             Map<String, Object> modelMap = Map.of("context", context);
             ChatClient chatClient = ChatClient.builder(chatModel)
                     .build();
-            return chatClient.prompt(promptTemplate.create(modelMap)).user(query).call().content();
+            ChatResponse chatResponse = chatClient.prompt(promptTemplate.create(modelMap)).user(query).call().chatResponse();
+
+            return chatResponse.getResult().getOutput().getText();
         } catch (Exception e) {
             LOGGER.severe("Error processing HOA search request for query: " + query + ". " + e.getMessage());
             return "I could not process that HOA question right now. Please try again later.";

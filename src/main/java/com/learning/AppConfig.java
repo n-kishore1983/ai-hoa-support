@@ -39,7 +39,7 @@ public class AppConfig {
         return new OllamaEmbeddingModel(
                 OllamaApi.builder().baseUrl(baseUrl).build(),
                 OllamaEmbeddingOptions.builder().model(modelName).build(),
-                ObservationRegistry.NOOP,
+                ObservationRegistry.create(),
                 ModelManagementOptions.defaults()
         );
     }
@@ -67,7 +67,7 @@ public class AppConfig {
         return OllamaChatModel.builder()
                 .ollamaApi(OllamaApi.builder().baseUrl(baseUrl).build())
                 .options(OllamaChatOptions.builder().model(modelName).build())
-                .observationRegistry(ObservationRegistry.NOOP)
+                .observationRegistry(ObservationRegistry.create())
                 .modelManagementOptions(ModelManagementOptions.defaults())
                 .build();
     }
@@ -83,6 +83,7 @@ public class AppConfig {
                         .apiKey(apiKey)
                         .model(modelName)
                         .build())
+                .observationRegistry(ObservationRegistry.create())
                 .build();
     }
 
