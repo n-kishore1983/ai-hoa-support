@@ -134,7 +134,7 @@ public class HoaSupportService {
             LOGGER.info("Skipping HOA PDF file (already processed): " + path1.getFileName());
             return "Document has already been processed.";
         }
-        redisTemplate.opsForValue().set(checksum, path1.getFileName().toString());
+
         LOGGER.info("Processing HOA PDF file: " + path1.getFileName());
 
         FileSystemResource pdfResource = new FileSystemResource(path1);
@@ -178,6 +178,7 @@ public class HoaSupportService {
         }
         if (totalChunksForFile > 0) {
             LOGGER.info("Ingested " + totalChunksForFile + " chunks for document " + path1.getFileName());
+            redisTemplate.opsForValue().set(checksum, path1.getFileName().toString());
             return "Document added to vector store successfully.";
         }
 
